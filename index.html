@@ -535,7 +535,11 @@ function isHolidayToday() {
 function pad(n) { return String(n).padStart(2, '0'); }
 function minToStr(m) { return `${pad(Math.floor(m/60))}:${pad(m%60)}`; }
 function strToMin(s) { const [h,m]=s.split(':').map(Number); return h*60+m; }
-function nowMin() { const d=new Date(); return d.getHours()*60+d.getMinutes(); }
+function nowMin() {
+  const d = new Date();
+  // اگه بیش از ۳۰ ثانیه از دقیقه گذشته، دقیقه بعدی رو برگردون
+  return d.getHours() * 60 + d.getMinutes() + (d.getSeconds() >= 30 ? 1 : 0);
+}
 function nowSec() { const d=new Date(); return d.getSeconds(); }
 
 function getStationIdx(id) { return id - 1; } // 0-based
@@ -693,10 +697,17 @@ function init() {
   });
 
   updateClock();
-  setInterval(updateClock, 1000);
+  setInterval(() => {
+    updateClock();
+    liveTickNextTrains();
+    liveTickFullSchedule();
+  }, 1000);
+
+  // rebuild کامل هر دقیقه
   setInterval(() => {
     if (currentTab === 'next') updateNextTrains();
-  }, 30000);
+    if (currentTab === 'full') showFullSchedule();
+  }, 60000);
 
   // Trigger next trains if cached values exist
   updateNextTrains();
@@ -729,6 +740,7 @@ function switchTab(tab) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('tab-'+tab).classList.add('active');
   if (tab === 'next') updateNextTrains();
+  if (tab === 'full') showFullSchedule();
 }
 
 // ============================================================
@@ -743,6 +755,16 @@ function swapStations(id1, id2) {
   if (id1.includes('n-') || id2.includes('n-')) updateNextTrains();
 }
 
+// کش قطارهای فعلی برای آپدیت زنده
+let _cachedTrains = [];
+let _cachedFromId = 0, _cachedToId = 0;
+
+// زمان فعلی بر حسب ثانیه از نیمه‌شب
+function nowSecs() {
+  const d = new Date();
+  return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
+}
+
 function updateNextTrains() {
   const fromId = parseInt(document.getElementById('n-from').value);
   const toId = parseInt(document.getElementById('n-to').value);
@@ -752,36 +774,63 @@ function updateNextTrains() {
   if (!fromId || !toId || fromId === toId) {
     container.style.display = 'none';
     empty.style.display = 'block';
+    _cachedTrains = []; _cachedFromId = 0; _cachedToId = 0;
     return;
   }
   container.style.display = 'block';
   empty.style.display = 'none';
 
   const holiday = isHolidayToday();
-  const trains = getTrainsForRoute(fromId, toId, holiday);
-  const now = nowMin();
-  const upcoming = trains.filter(t => t.depFrom >= now - 1).slice(0, 5);
+  // همه زمان‌ها رو به ثانیه تبدیل می‌کنیم
+  _cachedTrains = getTrainsForRoute(fromId, toId, holiday).map(t => ({
+    ...t,
+    depFromSec: t.depFrom * 60,   // تبدیل دقیقه به ثانیه
+    arrToSec:   t.arrTo   * 60,
+  }));
+  _cachedFromId = fromId;
+  _cachedToId = toId;
 
+  renderNextTrains();
+}
+
+function renderNextTrains() {
+  const fromId = _cachedFromId, toId = _cachedToId;
+  if (!fromId || !toId) return;
+
+  const nowS = nowSecs();
+  // قطار تا زمانی نشون داده می‌شه که دقیقه‌اش کاملاً رد نشده (یعنی nowS < depFromSec + 60)
+  const upcoming = _cachedTrains.filter(t => nowS < t.depFromSec + 60).slice(0, 5);
   const list = document.getElementById('nextTrainsList');
-  list.innerHTML = '';
+  const toName = STATIONS[toId-1].name;
+  const holiday = isHolidayToday();
 
   if (upcoming.length === 0) {
     list.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:12px">سرویس امروز تمام شده است 🌙</div>';
+    document.getElementById('journeyInfoCard').style.display = 'none';
     return;
   }
 
+  list.innerHTML = '';
   upcoming.forEach((t, i) => {
-    const diff = t.depFrom - now;
+    const diffSec = t.depFromSec - nowS; // ثانیه مانده
     const item = document.createElement('div');
     item.className = 'train-item' + (i === 0 ? ' next-train' : '');
 
-    let countdownClass = 'later', countdownText = '';
-    if (diff <= 0) { countdownClass = 'now'; countdownText = 'در حرکت'; }
-    else if (diff <= 5) { countdownClass = 'soon'; countdownText = `${diff} دقیقه دیگر`; }
-    else { countdownText = `${diff} دقیقه دیگر`; }
-
-    const fromName = STATIONS[fromId-1].name;
-    const toName = STATIONS[toId-1].name;
+    let cdClass, cdText;
+    if (diffSec <= 0) {
+      // همین دقیقه داره حرکت می‌کنه
+      cdClass = 'now';
+      cdText = '🚆 در حرکت';
+    } else if (diffSec < 60) {
+      // کمتر از یک دقیقه
+      cdClass = 'soon';
+      cdText = `${diffSec} ثانیه دیگر`;
+    } else {
+      const mins = Math.floor(diffSec / 60);
+      const secs = diffSec % 60;
+      cdClass = mins <= 5 ? 'soon' : 'later';
+      cdText = `${mins}:${pad(secs)} دقیقه دیگر`;
+    }
 
     item.innerHTML = `
       <div>
@@ -789,27 +838,57 @@ function updateNextTrains() {
         <div class="train-time">${minToStr(t.depFrom)}</div>
         <div style="font-size:10px;color:var(--muted)">ورود به ${toName}: ${minToStr(t.arrTo)}</div>
       </div>
-      <div class="train-countdown ${countdownClass}">${countdownText}</div>
+      <div class="train-countdown ${cdClass}">${cdText}</div>
     `;
     list.appendChild(item);
   });
 
-  // Journey info
-  if (upcoming.length > 0) {
-    const next = upcoming[0];
-    const card = document.getElementById('journeyInfoCard');
-    const info = document.getElementById('journeyInfo');
-    card.style.display = 'block';
-    info.innerHTML = `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-        <span class="info-chip">⏱ مدت سفر: ${next.travel} دقیقه</span>
-        <span class="info-chip">${holiday?'📅 جمعه/تعطیل':'📅 روز عادی'}</span>
-      </div>
-      <div style="font-size:12px;color:var(--muted);">
-        ${STATIONS[fromId-1].name} ← → ${STATIONS[toId-1].name}
-      </div>
-    `;
+  const card = document.getElementById('journeyInfoCard');
+  document.getElementById('journeyInfo').innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+      <span class="info-chip">⏱ مدت سفر: ${upcoming[0].travel} دقیقه</span>
+      <span class="info-chip">${holiday?'📅 جمعه/تعطیل':'📅 روز عادی'}</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);">
+      ${STATIONS[fromId-1].name} ← → ${STATIONS[toId-1].name}
+    </div>
+  `;
+  card.style.display = 'block';
+}
+
+// آپدیت زنده هر ثانیه — فقط countdown ها رو در جا آپدیت می‌کنه
+function liveTickNextTrains() {
+  if (currentTab !== 'next' || !_cachedFromId || !_cachedToId) return;
+
+  const nowS = nowSecs();
+  const upcoming = _cachedTrains.filter(t => nowS < t.depFromSec + 60).slice(0, 5);
+  const list = document.getElementById('nextTrainsList');
+  const items = list.querySelectorAll('.train-item');
+
+  // اگه تعداد عوض شد (قطاری رد شد) کامل rebuild کن
+  if (items.length !== upcoming.length) {
+    renderNextTrains();
+    return;
   }
+
+  upcoming.forEach((t, i) => {
+    const cd = items[i]?.querySelector('.train-countdown');
+    if (!cd) return;
+    const diffSec = t.depFromSec - nowS;
+
+    if (diffSec <= 0) {
+      cd.className = 'train-countdown now';
+      cd.textContent = '🚆 در حرکت';
+    } else if (diffSec < 60) {
+      cd.className = 'train-countdown soon';
+      cd.textContent = `${diffSec} ثانیه دیگر`;
+    } else {
+      const mins = Math.floor(diffSec / 60);
+      const secs = diffSec % 60;
+      cd.className = 'train-countdown ' + (mins <= 5 ? 'soon' : 'later');
+      cd.textContent = `${mins}:${pad(secs)} دقیقه دیگر`;
+    }
+  });
 }
 
 // ============================================================
@@ -915,16 +994,14 @@ function showFullSchedule() {
 
   let times = [];
   if (fullDir === 'noor') {
-    // toward نور لاله — only valid if station < 18
+    if (stId === 18) { result.innerHTML = '<div class="card" style="text-align:center;color:var(--muted);font-size:13px;">نور لاله مبدأ در این جهت است</div>'; return; }
     const deps = getDepsFromS1(holiday);
     times = deps.map(d => depAtStation(d, stId));
-    if (stId === 18) { result.innerHTML = '<div class="card" style="text-align:center;color:var(--muted);font-size:13px;">نور لاله مبدأ در این جهت است</div>'; return; }
   } else {
-    // toward ائل گؤلی — only valid if station > 1
+    if (stId === 1) { result.innerHTML = '<div class="card" style="text-align:center;color:var(--muted);font-size:13px;">ائل گؤلی مبدأ در این جهت است</div>'; return; }
     const deps = getDepsFromS18(holiday);
     const totalTravel = TRAVEL_FROM_S1[17];
     times = deps.map(d => d + (totalTravel - TRAVEL_FROM_S1[getStationIdx(stId)]));
-    if (stId === 1) { result.innerHTML = '<div class="card" style="text-align:center;color:var(--muted);font-size:13px;">ائل گؤلی مبدأ در این جهت است</div>'; return; }
   }
 
   const nextIdx = times.findIndex(t => t >= now);
@@ -937,7 +1014,7 @@ function showFullSchedule() {
     byHour[h].push({ t, i });
   });
 
-  let html = `<div class="card">
+  let html = `<div class="card" id="fullScheduleCard">
     <div class="card-title">حرکت از ${stName} — ${fullDir==='noor'?'به سمت نور لاله ←':'به سمت ائل گؤلی ←'}</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">${holiday?'جمعه و روزهای تعطیل':'روزهای عادی'} · ${times.length} قطار</div>`;
 
@@ -949,9 +1026,10 @@ function showFullSchedule() {
       const isPast = t < now;
       const isNext = i === nextIdx;
       const m = t % 60;
-      html += `<span style="
-        padding:5px 10px; border-radius:8px; font-size:13px; font-weight:700;
-        background:${isNext?'var(--accent)':isPast?'rgba(255,255,255,0.04)':'var(--surface2)'};
+      // data-time برای آپدیت زنده
+      html += `<span data-traintime="${t}" style="
+        padding:5px 10px; border-radius:8px; font-size:13px; font-weight:700; transition: all 0.4s;
+        background:${isNext?'var(--accent)':isPast?'rgba(127,127,127,0.08)':'var(--surface2)'};
         color:${isNext?'white':isPast?'var(--muted)':'var(--text)'};
         border:1px solid ${isNext?'var(--accent)':'var(--border)'};
       ">${pad(m)}</span>`;
@@ -961,6 +1039,32 @@ function showFullSchedule() {
 
   html += '</div>';
   result.innerHTML = html;
+}
+
+// آپدیت زنده جدول کامل — هر دقیقه highlight و رنگ‌ها عوض می‌شن
+function liveTickFullSchedule() {
+  if (currentTab !== 'full') return;
+  const card = document.getElementById('fullScheduleCard');
+  if (!card) return;
+
+  const now = nowMin();
+  const spans = card.querySelectorAll('span[data-traintime]');
+  let nextFound = false;
+
+  // پیدا کردن اولین قطار بعدی
+  const allTimes = Array.from(spans).map(s => parseInt(s.dataset.traintime));
+  const nextTime = allTimes.find(t => t >= now);
+
+  spans.forEach(span => {
+    const t = parseInt(span.dataset.traintime);
+    const isPast = t < now;
+    const isNext = t === nextTime && !nextFound && t >= now;
+    if (isNext) nextFound = true;
+
+    span.style.background = isNext ? 'var(--accent)' : isPast ? 'rgba(127,127,127,0.08)' : 'var(--surface2)';
+    span.style.color = isNext ? 'white' : isPast ? 'var(--muted)' : 'var(--text)';
+    span.style.borderColor = isNext ? 'var(--accent)' : 'var(--border)';
+  });
 }
 
 // ============================================================
