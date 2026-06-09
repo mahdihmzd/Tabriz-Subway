@@ -537,8 +537,7 @@ function minToStr(m) { return `${pad(Math.floor(m/60))}:${pad(m%60)}`; }
 function strToMin(s) { const [h,m]=s.split(':').map(Number); return h*60+m; }
 function nowMin() {
   const d = new Date();
-  // اگه بیش از ۳۰ ثانیه از دقیقه گذشته، دقیقه بعدی رو برگردون
-  return d.getHours() * 60 + d.getMinutes() + (d.getSeconds() >= 30 ? 1 : 0);
+  return d.getHours() * 60 + d.getMinutes();
 }
 function nowSec() { const d=new Date(); return d.getSeconds(); }
 
@@ -798,8 +797,8 @@ function renderNextTrains() {
   if (!fromId || !toId) return;
 
   const nowS = nowSecs();
-  // قطار تا زمانی نشون داده می‌شه که دقیقه‌اش کاملاً رد نشده (یعنی nowS < depFromSec + 60)
-  const upcoming = _cachedTrains.filter(t => nowS < t.depFromSec + 60).slice(0, 5);
+  // قطار تا ۱۵ ثانیه بعد از حرکت نشون داده می‌شه
+  const upcoming = _cachedTrains.filter(t => nowS < t.depFromSec + 15).slice(0, 5);
   const list = document.getElementById('nextTrainsList');
   const toName = STATIONS[toId-1].name;
   const holiday = isHolidayToday();
@@ -856,26 +855,28 @@ function renderNextTrains() {
   card.style.display = 'block';
 }
 
-// آپدیت زنده هر ثانیه — فقط countdown ها رو در جا آپدیت می‌کنه
+// آپدیت زنده هر ثانیه
 function liveTickNextTrains() {
   if (currentTab !== 'next' || !_cachedFromId || !_cachedToId) return;
 
   const nowS = nowSecs();
-  const upcoming = _cachedTrains.filter(t => nowS < t.depFromSec + 60).slice(0, 5);
+  const upcoming = _cachedTrains.filter(t => nowS < t.depFromSec + 15).slice(0, 5);
   const list = document.getElementById('nextTrainsList');
   const items = list.querySelectorAll('.train-item');
 
-  // اگه تعداد عوض شد (قطاری رد شد) کامل rebuild کن
-  if (items.length !== upcoming.length) {
+  // اگه تعداد یا اولین قطار عوض شد، فوری rebuild کن
+  const firstRenderedTime = items[0]?.querySelector('.train-time')?.textContent?.trim();
+  const firstUpcomingTime = upcoming[0] ? minToStr(upcoming[0].depFrom) : null;
+  if (!items.length || items.length !== upcoming.length || firstRenderedTime !== firstUpcomingTime) {
     renderNextTrains();
     return;
   }
 
+  // فقط countdown رو آپدیت کن
   upcoming.forEach((t, i) => {
     const cd = items[i]?.querySelector('.train-countdown');
     if (!cd) return;
     const diffSec = t.depFromSec - nowS;
-
     if (diffSec <= 0) {
       cd.className = 'train-countdown now';
       cd.textContent = '🚆 در حرکت';
