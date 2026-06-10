@@ -467,7 +467,7 @@ const STATIONS = [
   { id: 7,  name: 'دانشگاه' },
   { id: 8,  name: 'آبرسان' },
   { id: 9,  name: 'سالار ملی (قطب)' },
-  { id: 10, name: 'شهید بهشتی ره' },
+  { id: 10, name: 'شهید بهشتی (ره)' },
   { id: 11, name: 'میدان ساعت' },
   { id: 12, name: 'میدان کهن' },
   { id: 13, name: 'قونقا' },
@@ -862,10 +862,12 @@ function renderNextTrains() {
       cdClass = 'soon';
       cdText = `${diffSec} ثانیه دیگر`;
     } else {
-      const mins = Math.floor(diffSec / 60);
+      const totalMins = Math.floor(diffSec / 60);
       const secs = diffSec % 60;
-      cdClass = mins <= 5 ? 'soon' : 'later';
-      cdText = `${mins}:${pad(secs)} دقیقه دیگر`;
+      const hrs = Math.floor(totalMins / 60);
+      const mins = totalMins % 60;
+      cdClass = totalMins <= 5 ? 'soon' : 'later';
+      cdText = hrs > 0 ? `${hrs}:${pad(mins)}:${pad(secs)} دیگر` : `${mins}:${pad(secs)} دقیقه دیگر`;
     }
 
     item.innerHTML = `
@@ -921,10 +923,12 @@ function liveTickNextTrains() {
       cd.className = 'train-countdown soon';
       cd.textContent = `${diffSec} ثانیه دیگر`;
     } else {
-      const mins = Math.floor(diffSec / 60);
+      const totalMins = Math.floor(diffSec / 60);
       const secs = diffSec % 60;
-      cd.className = 'train-countdown ' + (mins <= 5 ? 'soon' : 'later');
-      cd.textContent = `${mins}:${pad(secs)} دقیقه دیگر`;
+      const hrs = Math.floor(totalMins / 60);
+      const mins = totalMins % 60;
+      cd.className = 'train-countdown ' + (totalMins <= 5 ? 'soon' : 'later');
+      cd.textContent = hrs > 0 ? `${hrs}:${pad(mins)}:${pad(secs)} دیگر` : `${mins}:${pad(secs)} دقیقه دیگر`;
     }
   });
 }
