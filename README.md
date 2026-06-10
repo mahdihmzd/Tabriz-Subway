@@ -1,2 +1,2 @@
-# Tabriz-metro
+# Tabriz-Subway
 زمان‌بندی مترو تبریز
